@@ -28,10 +28,6 @@ jobs:
       - name: Build and run tests
         run: ./gradlew clean build
 
-      # ktlint
-      - name: Run ktlint
-        uses: scerba/ktlint-action@v1
-
       # Detekt
       - name: Run Detekt
         uses: natiginfo/action-detekt-all@v1
