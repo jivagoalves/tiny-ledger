@@ -1,4 +1,4 @@
-# Tiny Ledger
+# Tiny Ledger ![Build](https://github.com/jivagoalves/tiny-ledger/actions/workflows/build.yml/badge.svg)
 
 A simple in-memory ledger API for deposits, withdrawals, balances, and history.
 
