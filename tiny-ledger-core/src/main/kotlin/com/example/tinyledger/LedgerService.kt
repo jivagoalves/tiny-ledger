@@ -40,23 +40,26 @@ class LedgerService(private val repository: LedgerRepository) {
     }
 
     fun withdrawal(amount: BigDecimal): Either<LedgerError, Transaction> {
-        if (isSession) {
-
-        }
         val balance = getBalance()
         if (amount > balance) return LedgerError.InsufficientBalance(balance).left()
         val transaction = Transaction(amount = amount, type = TransactionType.WITHDRAWAL)
-        addTemporaryTransaction(transaction)
+        if (isSession) {
+            addTemporaryTransaction(transaction)
+        } else {
+            addTransaction(transaction)
+        }
         return transaction.right()
     }
 
-    fun getBalance(): BigDecimal =
-        transactions.fold(BigDecimal.ZERO) { acc, t ->
+    fun getBalance(): BigDecimal {
+        val allTransactions = if (isSession) transactions else repository.findAll()
+        return allTransactions.fold(BigDecimal.ZERO) { acc, t ->
             when (t.type) {
                 TransactionType.DEPOSIT -> acc + t.amount
                 TransactionType.WITHDRAWAL -> acc - t.amount
             }
         }
+    }
 
     fun getHistory(): List<Transaction> =
         repository.findAll()

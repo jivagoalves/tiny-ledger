@@ -91,7 +91,7 @@ class LedgerServiceTest {
     }
 
     @Test
-    fun `run a series of transactions successfully`() {
+    fun `run a series of transactions with commit`() {
         service.begin()
         service.deposit(BigDecimal("100"))
         service.withdrawal(BigDecimal("40"))
@@ -101,7 +101,7 @@ class LedgerServiceTest {
     }
 
     @Test
-    fun `run a series of transactions which failed`() {
+    fun `run a series of transactions with rollback`() {
         service.deposit(BigDecimal("100"))
         service.begin()
         service.deposit(BigDecimal("100"))
