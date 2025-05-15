@@ -27,6 +27,7 @@ dependencies {
 	implementation("io.arrow-kt:arrow-core:2.1.1")
 	implementation("jakarta.validation:jakarta.validation-api:3.1.1")
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.6")
+	implementation("org.springframework.boot:spring-boot-starter-validation")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
