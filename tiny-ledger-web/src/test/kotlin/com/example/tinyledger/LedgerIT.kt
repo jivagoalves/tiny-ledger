@@ -45,4 +45,14 @@ class LedgerIT @Autowired constructor(
             status { isBadRequest() }
         }
     }
+
+    @Test
+    fun `deposit fails with negative amount`() {
+        mockMvc.post("/api/ledger/deposit") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{ "amount": -100.0 }"""
+        }.andExpect {
+            status { isBadRequest() }
+        }
+    }
 }
