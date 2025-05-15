@@ -1,8 +1,10 @@
 package com.example.tinyledger.config
 
 import com.example.tinyledger.InMemoryLedgerRepository
+import com.example.tinyledger.InMemoryTransactionalRepository
 import com.example.tinyledger.LedgerRepository
 import com.example.tinyledger.LedgerService
+import com.example.tinyledger.TransactionalLedgerRepository
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Primary
@@ -16,6 +18,10 @@ class LedgerConfig {
         InMemoryLedgerRepository()
 
     @Bean
-    fun ledgerService(repository: LedgerRepository): LedgerService =
+    fun transactionalLedgerRepository(ledgerRepository: LedgerRepository): TransactionalLedgerRepository =
+        InMemoryTransactionalRepository(ledgerRepository)
+
+    @Bean
+    fun ledgerService(repository: TransactionalLedgerRepository): LedgerService =
         LedgerService(repository)
 }

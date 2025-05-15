@@ -11,64 +11,27 @@ sealed class LedgerError {
 
 class LedgerService(private val repository: LedgerRepository) {
 
-    private var isSession: Boolean = false
-    private val transactions: MutableList<Transaction> = mutableListOf()
-
-    fun begin() {
-        isSession = true
-        transactions.clear()
-    }
-
-    fun commit() {
-        transactions.forEach { addTransaction(it) }
-        isSession = false
-    }
-
-    fun rollback() {
-        transactions.clear()
-        isSession = false
-    }
-
-    fun deposit(amount: BigDecimal): Either<LedgerError, Transaction> {
-        val transaction = Transaction(amount = amount, type = TransactionType.DEPOSIT)
-        if (isSession) {
-            addTemporaryTransaction(transaction)
-        } else {
-            addTransaction(transaction)
-        }
-        return transaction.right()
-    }
+    fun deposit(amount: BigDecimal): Either<LedgerError, Transaction> =
+        addTransaction(Transaction(amount = amount, type = TransactionType.DEPOSIT))
 
     fun withdrawal(amount: BigDecimal): Either<LedgerError, Transaction> {
         val balance = getBalance()
         if (amount > balance) return LedgerError.InsufficientBalance(balance).left()
-        val transaction = Transaction(amount = amount, type = TransactionType.WITHDRAWAL)
-        if (isSession) {
-            addTemporaryTransaction(transaction)
-        } else {
-            addTransaction(transaction)
-        }
-        return transaction.right()
+        return addTransaction(Transaction(amount = amount, type = TransactionType.WITHDRAWAL))
     }
 
-    fun getBalance(): BigDecimal {
-        val allTransactions = if (isSession) transactions else repository.findAll()
-        return allTransactions.fold(BigDecimal.ZERO) { acc, t ->
+    fun getBalance(): BigDecimal =
+        repository.findAll().fold(BigDecimal.ZERO) { acc, t ->
             when (t.type) {
                 TransactionType.DEPOSIT -> acc + t.amount
                 TransactionType.WITHDRAWAL -> acc - t.amount
             }
         }
-    }
 
     fun getHistory(): List<Transaction> =
         repository.findAll()
 
     private fun addTransaction(transaction: Transaction): Either<LedgerError, Transaction> {
         return repository.save(transaction).right()
-    }
-
-    private fun addTemporaryTransaction(transaction: Transaction) {
-        transactions.add(transaction)
     }
 }
