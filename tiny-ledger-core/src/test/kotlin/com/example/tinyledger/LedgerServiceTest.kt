@@ -89,4 +89,25 @@ class LedgerServiceTest {
             history.map(Transaction::type)
         )
     }
+
+    @Test
+    fun `run a series of transactions successfully`() {
+        service.begin()
+        service.deposit(BigDecimal("100"))
+        service.withdrawal(BigDecimal("40"))
+        service.commit()
+
+        assertEquals(BigDecimal("60"), service.getBalance())
+    }
+
+    @Test
+    fun `run a series of transactions which failed`() {
+        service.deposit(BigDecimal("100"))
+        service.begin()
+        service.deposit(BigDecimal("100"))
+        service.withdrawal(BigDecimal("40"))
+        service.rollback()
+
+        assertEquals(BigDecimal("100"), service.getBalance())
+    }
 }
