@@ -15,6 +15,9 @@ class InMemoryTransactionalRepositoryTest {
         }
 
         override fun findAll(): List<Transaction> = store
+
+        override fun delete(transaction: Transaction): Boolean =
+            store.remove(transaction)
     }
 
     private val repository = InMemoryTransactionalRepository(fakeLedgerRepository)
@@ -74,5 +77,29 @@ class InMemoryTransactionalRepositoryTest {
 
         repository.begin()
         assertEquals(listOf(transaction), repository.findAll())
+    }
+
+    @Test
+    fun `transactions should be committed atomically`() {
+        val repository = InMemoryTransactionalRepository(object : LedgerRepository {
+            override fun save(transaction: Transaction): Transaction =
+                if (transaction.amount == BigDecimal("200"))
+                    throw IllegalStateException()
+                else
+                    transaction
+
+            override fun findAll(): List<Transaction> = emptyList()
+
+            override fun delete(transaction: Transaction): Boolean =
+                store.remove(transaction)
+
+        })
+
+        repository.begin()
+        repository.save(Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT))
+        repository.save(Transaction(amount = BigDecimal("200"), type = TransactionType.DEPOSIT))
+        repository.commit()
+
+        assertTrue(repository.findAll().isEmpty())
     }
 }

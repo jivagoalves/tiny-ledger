@@ -13,4 +13,7 @@ class InMemoryLedgerRepository : LedgerRepository {
     }
 
     override fun findAll(): List<Transaction> = store.toList()
+
+    override fun delete(transaction: Transaction): Boolean =
+        store.remove(transaction)
 }

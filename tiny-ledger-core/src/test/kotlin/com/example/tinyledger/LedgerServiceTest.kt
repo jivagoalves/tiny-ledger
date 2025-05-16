@@ -17,6 +17,8 @@ class LedgerServiceTest {
         }
 
         override fun findAll(): List<Transaction> = store
+        override fun delete(transaction: Transaction): Boolean =
+            store.remove(transaction)
     }
 
     val service = LedgerService(repository)
