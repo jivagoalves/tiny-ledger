@@ -1,4 +1,4 @@
-package com.example.tinyledger
+package com.example.tinyledger.repository
 
 interface TransactionalLedgerRepository: LedgerRepository {
     fun begin()

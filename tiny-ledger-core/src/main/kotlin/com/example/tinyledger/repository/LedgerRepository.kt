@@ -1,4 +1,6 @@
-package com.example.tinyledger
+package com.example.tinyledger.repository
+
+import com.example.tinyledger.Transaction
 
 interface LedgerRepository {
     fun save(transaction: Transaction): Transaction

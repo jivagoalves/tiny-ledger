@@ -1,5 +1,6 @@
 package com.example.tinyledger
 
+import com.example.tinyledger.repository.LedgerRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach

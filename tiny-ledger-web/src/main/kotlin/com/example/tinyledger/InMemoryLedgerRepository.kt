@@ -1,5 +1,6 @@
 package com.example.tinyledger
 
+import com.example.tinyledger.repository.LedgerRepository
 import org.springframework.stereotype.Repository
 import java.util.concurrent.ConcurrentLinkedQueue
 

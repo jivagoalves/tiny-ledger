@@ -3,6 +3,7 @@ package com.example.tinyledger
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
+import com.example.tinyledger.repository.LedgerRepository
 import java.math.BigDecimal
 
 sealed class LedgerError {

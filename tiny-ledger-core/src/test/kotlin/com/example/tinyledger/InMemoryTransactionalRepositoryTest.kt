@@ -1,5 +1,7 @@
 package com.example.tinyledger
 
+import com.example.tinyledger.repository.InMemoryTransactionalRepository
+import com.example.tinyledger.repository.LedgerRepository
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
