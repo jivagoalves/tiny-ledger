@@ -45,6 +45,18 @@ class InMemoryTransactionalRepositoryTest {
     }
 
     @Test
+    fun `commit is idempotent`() {
+        val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+
+        repository.begin()
+        repository.save(transaction)
+        repository.commit()
+        repository.commit()
+
+        assertEquals(listOf(transaction), repository.findAll())
+    }
+
+    @Test
     fun `run a series of transactions with rollback`() {
         val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
 
