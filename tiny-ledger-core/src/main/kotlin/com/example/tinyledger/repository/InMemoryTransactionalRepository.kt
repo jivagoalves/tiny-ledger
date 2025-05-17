@@ -18,12 +18,11 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
         } catch (_: RuntimeException) {
             transactions.forEach { ledgerRepository.delete(it) }
         } finally {
-            rollback()
+            reset()
         }
 
     override fun rollback() {
-        transactions.clear()
-        isTransactional = false
+        reset()
     }
 
     override fun save(transaction: Transaction): Transaction =
@@ -41,4 +40,22 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
 
     override fun delete(transaction: Transaction): Boolean =
         transactions.remove(transaction)
+
+    fun <T> withTransaction(transactionFn: () -> T): T {
+        var result: T
+        begin()
+        try {
+            result = transactionFn()
+            commit()
+            return result
+        } finally {
+            reset()
+        }
+    }
+
+    private fun reset() {
+        transactions.clear()
+        isTransactional = false
+    }
+
 }

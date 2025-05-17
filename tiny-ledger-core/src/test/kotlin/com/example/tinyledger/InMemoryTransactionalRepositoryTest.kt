@@ -104,4 +104,32 @@ class InMemoryTransactionalRepositoryTest {
 
         assertTrue(repository.findAll().isEmpty())
     }
+
+    @Test
+    fun `should allow to group transactional operations within a block`() {
+        val transaction1 = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+        val transaction2 = Transaction(amount = BigDecimal("200"), type = TransactionType.DEPOSIT)
+
+        val result = repository.withTransaction {
+            repository.save(transaction1)
+            repository.save(transaction2)
+        }
+
+        assertEquals(transaction2, result)
+        assertEquals(listOf(transaction1, transaction2), repository.findAll())
+    }
+
+    @Test
+    fun `should commit transactional operations in a block atomically`() {
+        val transaction1 = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+
+        assertThrows(RuntimeException::class.java) {
+            repository.withTransaction {
+                repository.save(transaction1)
+                throw RuntimeException()
+            }
+        }
+
+        assertTrue(repository.findAll().isEmpty())
+    }
 }

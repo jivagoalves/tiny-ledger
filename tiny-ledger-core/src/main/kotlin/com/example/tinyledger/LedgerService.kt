@@ -22,10 +22,10 @@ class LedgerService(private val repository: LedgerRepository) {
     }
 
     fun getBalance(): BigDecimal =
-        repository.findAll().fold(BigDecimal.ZERO) { acc, t ->
+        repository.findAll().fold(BigDecimal.ZERO) { sum, t ->
             when (t.type) {
-                TransactionType.DEPOSIT -> acc + t.amount
-                TransactionType.WITHDRAWAL -> acc - t.amount
+                TransactionType.DEPOSIT -> sum + t.amount
+                TransactionType.WITHDRAWAL -> sum - t.amount
             }
         }
 
