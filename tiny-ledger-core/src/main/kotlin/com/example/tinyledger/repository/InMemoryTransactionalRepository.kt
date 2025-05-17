@@ -41,7 +41,7 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
     override fun delete(transaction: Transaction): Boolean =
         transactions.remove(transaction)
 
-    fun <T> withTransaction(transactionFn: () -> T): T {
+    override fun <T> withTransaction(transactionFn: () -> T): T {
         var result: T
         begin()
         try {

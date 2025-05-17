@@ -1,6 +1,7 @@
 package com.example.tinyledger
 
 import com.example.tinyledger.repository.LedgerRepository
+import com.example.tinyledger.repository.TransactionalLedgerRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -10,7 +11,7 @@ import java.math.BigDecimal
 class LedgerServiceTest {
     private val store = mutableListOf<Transaction>()
 
-    val repository = object : LedgerRepository {
+    val repository = object : TransactionalLedgerRepository {
         override fun save(transaction: Transaction): Transaction {
             store.add(transaction)
             return transaction
@@ -19,6 +20,11 @@ class LedgerServiceTest {
         override fun findAll(): List<Transaction> = store
         override fun delete(transaction: Transaction): Boolean =
             store.remove(transaction)
+
+        override fun begin() = Unit
+        override fun commit() = Unit
+        override fun rollback() = Unit
+        override fun <T> withTransaction(transactionFn: () -> T): T = transactionFn()
     }
 
     val service = LedgerService(repository)
