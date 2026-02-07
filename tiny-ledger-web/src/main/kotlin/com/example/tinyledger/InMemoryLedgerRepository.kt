@@ -4,7 +4,6 @@ import com.example.tinyledger.repository.LedgerRepository
 import org.springframework.stereotype.Repository
 import java.util.concurrent.ConcurrentLinkedQueue
 
-@Repository
 class InMemoryLedgerRepository : LedgerRepository {
     private val store = ConcurrentLinkedQueue<Transaction>()
 

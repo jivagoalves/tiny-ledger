@@ -6,6 +6,9 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import kotlin.jvm.javaClass
 
 class InMemoryTransactionalRepositoryTest {
     private val store = mutableListOf<Transaction>()
@@ -100,7 +103,10 @@ class InMemoryTransactionalRepositoryTest {
         repository.begin()
         repository.save(Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT))
         repository.save(Transaction(amount = BigDecimal("200"), type = TransactionType.DEPOSIT))
-        repository.commit()
+        assertThrows(IllegalStateException::class.java) {
+            repository.commit()
+        }
+
 
         assertTrue(repository.findAll().isEmpty())
     }
@@ -131,5 +137,48 @@ class InMemoryTransactionalRepositoryTest {
         }
 
         assertTrue(repository.findAll().isEmpty())
+    }
+
+    @Test
+    fun `concurrent transactions should have isolated state`() {
+        val threadSafeStore = ConcurrentLinkedQueue<Transaction>()
+        val threadSafeRepo = object : LedgerRepository {
+            override fun save(transaction: Transaction): Transaction {
+                threadSafeStore.add(transaction)
+                return transaction
+            }
+            override fun findAll(): List<Transaction> = threadSafeStore.toList()
+            override fun delete(transaction: Transaction): Boolean = threadSafeStore.remove(transaction)
+        }
+        val repository = InMemoryTransactionalRepository(threadSafeRepo)
+
+        val transactionA = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+        val transactionB = Transaction(amount = BigDecimal("200"), type = TransactionType.DEPOSIT)
+
+        val threadAStarted = CountDownLatch(1)
+        val threadBCommitted = CountDownLatch(1)
+
+        val threadA = Thread {
+            repository.begin()
+            repository.save(transactionA)
+            threadAStarted.countDown()
+            threadBCommitted.await()
+            repository.rollback()
+        }
+
+        val threadB = Thread {
+            threadAStarted.await()
+            repository.withTransaction {
+                repository.save(transactionB)
+            }
+            threadBCommitted.countDown()
+        }
+
+        threadA.start()
+        threadB.start()
+        threadA.join()
+        threadB.join()
+
+        assertEquals(listOf(transactionB), threadSafeStore.toList())
     }
 }

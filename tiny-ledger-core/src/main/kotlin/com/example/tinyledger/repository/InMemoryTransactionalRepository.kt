@@ -1,22 +1,22 @@
 package com.example.tinyledger.repository
 
 import com.example.tinyledger.Transaction
-import java.util.concurrent.ConcurrentLinkedQueue
 
 class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : TransactionalLedgerRepository {
-    private var isTransactional = false
+    private val isTransactional = ThreadLocal.withInitial { false }
 
-    private val transactions = ConcurrentLinkedQueue<Transaction>()
+    private val pendingTransactions = ThreadLocal.withInitial { mutableListOf<Transaction>() }
 
     override fun begin() {
-        isTransactional = true
+        isTransactional.set(true)
     }
 
     override fun commit() =
         try {
-            transactions.forEach { ledgerRepository.save(it) }
-        } catch (_: RuntimeException) {
-            transactions.forEach { ledgerRepository.delete(it) }
+            pendingTransactions.get().forEach { ledgerRepository.save(it) }
+        } catch (e: RuntimeException) {
+            pendingTransactions.get().forEach { ledgerRepository.delete(it) }
+            throw e
         } finally {
             reset()
         }
@@ -26,20 +26,20 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
     }
 
     override fun save(transaction: Transaction): Transaction =
-        if (isTransactional) {
-            transactions.add(transaction)
+        if (isTransactional.get()) {
+            pendingTransactions.get().add(transaction)
             transaction
         } else ledgerRepository.save(transaction)
 
     override fun findAll(): List<Transaction> =
-        if (isTransactional) {
-            ledgerRepository.findAll() + transactions.toList()
+        if (isTransactional.get()) {
+            ledgerRepository.findAll() + pendingTransactions.get()
         } else {
             ledgerRepository.findAll()
         }
 
     override fun delete(transaction: Transaction): Boolean =
-        transactions.remove(transaction)
+        pendingTransactions.get().remove(transaction)
 
     override fun <T> withTransaction(transactionFn: () -> T): T {
         var result: T
@@ -54,8 +54,8 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
     }
 
     private fun reset() {
-        transactions.clear()
-        isTransactional = false
+        pendingTransactions.get().clear()
+        isTransactional.set(false)
     }
 
 }

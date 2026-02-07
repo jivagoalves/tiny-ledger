@@ -19,7 +19,8 @@ class LedgerService(private val repository: TransactionalLedgerRepository) {
 
     fun withdrawal(amount: BigDecimal): Either<LedgerError, Transaction> = repository.withTransaction {
         val balance = getBalance()
-        if (amount > balance) return@withTransaction LedgerError.InsufficientBalance(balance).left()
+        if (amount > balance)
+            return@withTransaction LedgerError.InsufficientBalance(balance).left()
         return@withTransaction addTransaction(Transaction(amount = amount, type = TransactionType.WITHDRAWAL))
     }
 
