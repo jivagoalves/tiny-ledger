@@ -2,6 +2,7 @@ package com.example.tinyledger
 
 import com.example.tinyledger.repository.InMemoryTransactionalRepository
 import com.example.tinyledger.repository.LedgerRepository
+import com.example.tinyledger.repository.OptimisticLockException
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -179,5 +180,98 @@ class InMemoryTransactionalRepositoryTest {
         threadB.join()
 
         assertEquals(listOf(transactionB), threadSafeStore.toList())
+    }
+
+    @Test
+    fun `should not allow ABA vulnerability allowing commit on stale data`() {
+        val store = ConcurrentLinkedQueue<Transaction>()
+        val partialCommitVisible = CountDownLatch(1)
+        val threadBReadDone = CountDownLatch(1)
+        val threadARolledBack = CountDownLatch(1)
+        val threadCCommitted = CountDownLatch(1)
+
+        val poisonAmount = BigDecimal("999")
+
+        val customRepo = object : LedgerRepository {
+            override fun save(transaction: Transaction): Transaction {
+                if (transaction.amount == poisonAmount) {
+                    partialCommitVisible.countDown()
+                    threadBReadDone.await()
+                    throw RuntimeException("simulated save failure")
+                }
+                store.add(transaction)
+                return transaction
+            }
+            override fun findAll(): List<Transaction> = store.toList()
+            override fun delete(transaction: Transaction): Boolean = store.remove(transaction)
+        }
+
+        val repository = InMemoryTransactionalRepository(customRepo)
+
+        // Seed: one deposit already committed in the underlying store
+        val seed = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+        store.add(seed)
+
+        val phantomDeposit = Transaction(amount = BigDecimal("200"), type = TransactionType.DEPOSIT)
+        val poison = Transaction(amount = poisonAmount, type = TransactionType.DEPOSIT)
+
+        var threadBSawPhantom = false
+        var threadBCommitSucceeded = false
+
+        // Thread A: CAS(0,1) succeeds → saves phantomDeposit → poison throws
+        //   catch: deletes phantomDeposit, decrementAndGet → version back to 0
+        val threadA = Thread {
+            repository.begin()
+            repository.save(phantomDeposit)
+            repository.save(poison)
+            try {
+                repository.commit()
+            } catch (_: RuntimeException) { }
+            threadARolledBack.countDown()
+        }
+
+        // Thread B: begins after A's CAS (readVersion=1), reads phantom data
+        val threadB = Thread {
+            partialCommitVisible.await()
+            repository.begin()  // readVersion = 1 (A already bumped it)
+            threadBSawPhantom = repository.findAll().contains(phantomDeposit)
+            threadBReadDone.countDown()
+
+            threadCCommitted.await()
+            val item = Transaction(amount = BigDecimal("50"), type = TransactionType.DEPOSIT)
+            repository.save(item)
+            try {
+                repository.commit()  // CAS(1, 2) — version is 1 again (ABA: 1→0→1)
+                threadBCommitSucceeded = true
+            } catch (_: OptimisticLockException) {
+                threadBCommitSucceeded = false
+            }
+        }
+
+        // Thread C: commits after A's rollback → CAS(0,1) bumps version back to 1
+        val threadC = Thread {
+            threadARolledBack.await()
+            val item = Transaction(amount = BigDecimal("10"), type = TransactionType.DEPOSIT)
+            repository.begin()
+            repository.save(item)
+            repository.commit()
+            threadCCommitted.countDown()
+        }
+
+        threadA.start()
+        threadB.start()
+        threadC.start()
+        threadA.join()
+        threadB.join()
+        threadC.join()
+
+        // Thread B read phantomDeposit during A's partial commit
+        assertTrue(threadBSawPhantom, "Thread B has seen the phantom deposit")
+
+        // Thread B's commit succeeded despite reading rolled-back data (ABA vulnerability)
+        assertFalse(threadBCommitSucceeded, "Thread B commit should not succeed")
+
+        // The data Thread B based its read on is gone — phantomDeposit was rolled back
+        assertFalse(store.contains(phantomDeposit), "Phantom deposit should not be in the store")
     }
 }

@@ -29,7 +29,6 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
                     pending.forEach { ledgerRepository.save(it) }
                 } catch (e: RuntimeException) {
                     pending.forEach { ledgerRepository.delete(it) }
-                    version.decrementAndGet()
                     throw e
                 }
             }
