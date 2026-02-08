@@ -16,7 +16,6 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
 
     override fun begin() {
         isTransactional.set(true)
-        pendingTransactions.set(mutableListOf())
         readVersion.set(version.get())
         snapshot.set(ledgerRepository.findAll().toList())
     }
@@ -80,11 +79,8 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
     }
 
     private fun reset() {
-        isTransactional.set(false)
-        pendingTransactions.apply {
-            get().clear()
-            remove()
-        }
+        isTransactional.remove()
+        pendingTransactions.remove()
         readVersion.remove()
         snapshot.remove()
     }
