@@ -3,7 +3,6 @@ package com.example.tinyledger
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
-import com.example.tinyledger.repository.LedgerRepository
 import com.example.tinyledger.repository.TransactionalLedgerRepository
 import java.math.BigDecimal
 

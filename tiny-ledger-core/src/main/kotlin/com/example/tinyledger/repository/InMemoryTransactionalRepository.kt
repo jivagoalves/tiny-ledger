@@ -12,10 +12,13 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
 
     private val version = AtomicLong(0)
     private val readVersion = ThreadLocal.withInitial { 0L }
+    private val snapshot = ThreadLocal.withInitial<List<Transaction>> { emptyList() }
 
     override fun begin() {
         isTransactional.set(true)
+        pendingTransactions.set(mutableListOf())
         readVersion.set(version.get())
+        snapshot.set(ledgerRepository.findAll().toList())
     }
 
     override fun commit() {
@@ -49,7 +52,7 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
 
     override fun findAll(): List<Transaction> =
         if (isTransactional.get()) {
-            ledgerRepository.findAll() + pendingTransactions.get()
+            snapshot.get() + pendingTransactions.get()
         } else {
             ledgerRepository.findAll()
         }
@@ -77,8 +80,13 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
     }
 
     private fun reset() {
-        pendingTransactions.get().clear()
         isTransactional.set(false)
+        pendingTransactions.apply {
+            get().clear()
+            remove()
+        }
+        readVersion.remove()
+        snapshot.remove()
     }
 
 }

@@ -127,7 +127,7 @@ class LedgerServiceTest {
         val repository = InMemoryTransactionalRepository(synchronizingRepo)
         val service = LedgerService(repository)
 
-        service.deposit(BigDecimal("100"))
+        store.add(Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT))
 
         val results = ConcurrentLinkedQueue<Either<LedgerError, Transaction>>()
         val thread1 = Thread { results.add(service.withdrawal(BigDecimal("100"))) }

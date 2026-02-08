@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
+import kotlin.collections.emptyList
 
 class InMemoryTransactionalRepositoryTest {
     private val store = mutableListOf<Transaction>()
@@ -273,5 +274,34 @@ class InMemoryTransactionalRepositoryTest {
 
         // The data Thread B based its read on is gone — phantomDeposit was rolled back
         assertFalse(store.contains(phantomDeposit), "Phantom deposit should not be in the store")
+    }
+
+    @Test
+    fun `should ensure snapshot isolation or repeatable reads`() {
+        val threadBSaved = CountDownLatch(1)
+        var firstRead: List<Transaction> = emptyList()
+        var secondRead: List<Transaction> = emptyList()
+
+        val threadA = Thread {
+            repository.withTransaction {
+                firstRead = repository.findAll()
+                threadBSaved.await()
+                secondRead = repository.findAll()
+            }
+        }
+        val threadB = Thread {
+            repository.withTransaction {
+                repository.save(Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT))
+            }
+            threadBSaved.countDown()
+        }
+
+        threadA.start()
+        threadB.start()
+        threadA.join()
+        threadB.join()
+
+        assertEquals(emptyList<Transaction>(), firstRead)
+        assertEquals(emptyList<Transaction>(), secondRead)
     }
 }
