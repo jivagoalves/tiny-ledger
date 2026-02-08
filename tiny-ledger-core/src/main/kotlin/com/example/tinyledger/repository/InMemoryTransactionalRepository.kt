@@ -5,42 +5,55 @@ import java.util.concurrent.atomic.AtomicLong
 
 class OptimisticLockException : RuntimeException("Concurrent modification detected")
 
-class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : TransactionalLedgerRepository {
-    private val isTransactional = ThreadLocal.withInitial { false }
+class InMemoryTransactionalRepository(private val ledgerRepository: LedgerRepository) : TransactionalLedgerRepository {
 
-    private val pendingTransactions = ThreadLocal.withInitial { mutableListOf<Transaction>() }
+    private class TransactionContext(
+        val snapshot: List<Transaction>,
+        val readVersion: Long,
+    ) {
+        val saves = mutableListOf<Transaction>()
+        val deletes = mutableListOf<Transaction>()
 
-    private val pendingDeletes = ThreadLocal.withInitial { mutableListOf<Transaction>() }
+        fun hasPendingChanges() = saves.isNotEmpty() || deletes.isNotEmpty()
+    }
 
     private val version = AtomicLong(0)
-    private val readVersion = ThreadLocal.withInitial { 0L }
-    private val snapshot = ThreadLocal.withInitial<List<Transaction>> { emptyList() }
+    private val activeTransactionContext = ThreadLocal<TransactionContext>()
 
     override fun begin() {
-        isTransactional.set(true)
-        readVersion.set(version.get())
-        snapshot.set(ledgerRepository.findAll().toList())
+        activeTransactionContext.set(
+            TransactionContext(
+                snapshot = ledgerRepository.findAll().toList(),
+                readVersion = version.get()
+            )
+        )
     }
 
     override fun commit() {
-        val pending = pendingTransactions.get()
-        val deletes = pendingDeletes.get()
+        val txCtx = activeTransactionContext.get() ?: return
         try {
-            if (pending.isNotEmpty() || deletes.isNotEmpty()) {
-                if (!version.compareAndSet(readVersion.get(), readVersion.get() + 1)) {
+            if (txCtx.hasPendingChanges()) {
+                if (!compareAndSetVersion(txCtx)) {
                     throw OptimisticLockException()
                 }
-                try {
-                    pending.forEach { ledgerRepository.save(it) }
-                    deletes.forEach { ledgerRepository.delete(it) }
-                } catch (e: RuntimeException) {
-                    pending.forEach { ledgerRepository.delete(it) }
-                    deletes.forEach { ledgerRepository.save(it) }
-                    throw e
-                }
+                applyChanges(txCtx)
             }
         } finally {
             reset()
+        }
+    }
+
+    private fun compareAndSetVersion(txCtx: TransactionContext): Boolean =
+        version.compareAndSet(txCtx.readVersion, txCtx.readVersion + 1)
+
+    private fun applyChanges(txCtx: TransactionContext) {
+        try {
+            txCtx.saves.forEach { ledgerRepository.save(it) }
+            txCtx.deletes.forEach { ledgerRepository.delete(it) }
+        } catch (e: RuntimeException) {
+            txCtx.saves.forEach { ledgerRepository.delete(it) }
+            txCtx.deletes.forEach { ledgerRepository.save(it) }
+            throw e
         }
     }
 
@@ -48,29 +61,29 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
         reset()
     }
 
-    override fun save(transaction: Transaction): Transaction =
-        if (isTransactional.get()) {
-            pendingTransactions.get().add(transaction)
-            transaction
-        } else ledgerRepository.save(transaction)
+    override fun save(transaction: Transaction): Transaction {
+        val txCtx = activeTransactionContext.get()
+            ?: return ledgerRepository.save(transaction)
+        txCtx.saves.add(transaction)
+        return transaction
+    }
 
-    override fun findAll(): List<Transaction> =
-        if (isTransactional.get()) {
-            snapshot.get().filter { it !in pendingDeletes.get() } + pendingTransactions.get()
-        } else {
-            ledgerRepository.findAll()
-        }
+    override fun findAll(): List<Transaction> {
+        val txCtx = activeTransactionContext.get()
+            ?: return ledgerRepository.findAll()
+        return txCtx.snapshot.filter { it !in txCtx.deletes } + txCtx.saves
+    }
 
-    override fun delete(transaction: Transaction): Boolean =
-        if (isTransactional.get()) {
-            pendingTransactions.get().remove(transaction) ||
-                (snapshot.get().contains(transaction) && pendingDeletes.get().add(transaction))
-        } else {
-            ledgerRepository.delete(transaction)
-        }
+    override fun delete(transaction: Transaction): Boolean {
+        val txCtx = activeTransactionContext.get()
+            ?: return ledgerRepository.delete(transaction)
+        if (txCtx.saves.remove(transaction)) return true
+        if (transaction in txCtx.snapshot) return txCtx.deletes.add(transaction)
+        return false
+    }
 
     override fun <T> withTransaction(transactionFn: () -> T): T {
-        if (isTransactional.get()) {
+        if (activeTransactionContext.get() != null) {
             return transactionFn()
         }
         while (true) {
@@ -89,11 +102,6 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
     }
 
     private fun reset() {
-        isTransactional.remove()
-        pendingTransactions.remove()
-        pendingDeletes.remove()
-        readVersion.remove()
-        snapshot.remove()
+        activeTransactionContext.remove()
     }
-
 }
