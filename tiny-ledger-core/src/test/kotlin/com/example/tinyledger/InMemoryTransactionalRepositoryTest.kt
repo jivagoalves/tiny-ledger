@@ -77,6 +77,66 @@ class InMemoryTransactionalRepositoryTest {
     }
 
     @Test
+    fun `should delete from underlying repository when not within transaction`() {
+        val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+
+        repository.save(transaction)
+        repository.delete(transaction)
+
+        assertTrue(repository.findAll().isEmpty())
+    }
+
+    @Test
+    fun `should delete from underlying repository after transaction commit`() {
+        val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+        repository.save(transaction)
+
+        repository.withTransaction {
+            repository.delete(transaction)
+        }
+
+        assertTrue(repository.findAll().isEmpty())
+    }
+
+    @Test
+    fun `should not delete if transaction is rolled back`() {
+        val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+        repository.save(transaction)
+
+        assertThrows(RuntimeException::class.java) {
+            repository.withTransaction {
+                repository.delete(transaction)
+                throw RuntimeException("Boom!")
+            }
+        }
+
+        assertTrue(repository.findAll().isNotEmpty())
+    }
+
+    @Test
+    fun `should delete from pending transactions within transaction`() {
+        val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+
+        repository.withTransaction {
+            repository.save(transaction)
+            repository.delete(transaction)
+        }
+
+        assertTrue(repository.findAll().isEmpty())
+    }
+
+    @Test
+    fun `should not see deleted committed transaction within same transaction`() {
+        val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+        repository.save(transaction)
+
+        repository.withTransaction {
+            repository.delete(transaction)
+            assertTrue(repository.findAll().isEmpty())
+        }
+    }
+
+    @Test
     fun `should read previously committed transactions within a session`() {
         val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
         repository.save(transaction)

@@ -10,6 +10,8 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
 
     private val pendingTransactions = ThreadLocal.withInitial { mutableListOf<Transaction>() }
 
+    private val pendingDeletes = ThreadLocal.withInitial { mutableListOf<Transaction>() }
+
     private val version = AtomicLong(0)
     private val readVersion = ThreadLocal.withInitial { 0L }
     private val snapshot = ThreadLocal.withInitial<List<Transaction>> { emptyList() }
@@ -22,15 +24,18 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
 
     override fun commit() {
         val pending = pendingTransactions.get()
+        val deletes = pendingDeletes.get()
         try {
-            if (pending.isNotEmpty()) {
+            if (pending.isNotEmpty() || deletes.isNotEmpty()) {
                 if (!version.compareAndSet(readVersion.get(), readVersion.get() + 1)) {
                     throw OptimisticLockException()
                 }
                 try {
                     pending.forEach { ledgerRepository.save(it) }
+                    deletes.forEach { ledgerRepository.delete(it) }
                 } catch (e: RuntimeException) {
                     pending.forEach { ledgerRepository.delete(it) }
+                    deletes.forEach { ledgerRepository.save(it) }
                     throw e
                 }
             }
@@ -51,13 +56,18 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
 
     override fun findAll(): List<Transaction> =
         if (isTransactional.get()) {
-            snapshot.get() + pendingTransactions.get()
+            snapshot.get().filter { it !in pendingDeletes.get() } + pendingTransactions.get()
         } else {
             ledgerRepository.findAll()
         }
 
     override fun delete(transaction: Transaction): Boolean =
-        pendingTransactions.get().remove(transaction)
+        if (isTransactional.get()) {
+            pendingTransactions.get().remove(transaction) ||
+                (snapshot.get().contains(transaction) && pendingDeletes.get().add(transaction))
+        } else {
+            ledgerRepository.delete(transaction)
+        }
 
     override fun <T> withTransaction(transactionFn: () -> T): T {
         if (isTransactional.get()) {
@@ -81,6 +91,7 @@ class InMemoryTransactionalRepository(val ledgerRepository: LedgerRepository) : 
     private fun reset() {
         isTransactional.remove()
         pendingTransactions.remove()
+        pendingDeletes.remove()
         readVersion.remove()
         snapshot.remove()
     }
