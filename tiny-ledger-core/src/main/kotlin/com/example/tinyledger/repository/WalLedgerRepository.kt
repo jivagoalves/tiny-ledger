@@ -4,9 +4,11 @@ import com.example.tinyledger.Transaction
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.FileOutputStream
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.io.path.appendText
+import kotlin.io.path.createParentDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readLines
 
@@ -14,6 +16,10 @@ class WalLedgerRepository(
     private val delegate: LedgerRepository,
     private val walPath: Path
 ) : LedgerRepository by delegate {
+    init {
+        walPath.createParentDirectories()
+    }
+
     private val json = Json { encodeDefaults = true }
     private val lsn = AtomicLong(0)
 
@@ -40,7 +46,9 @@ class WalLedgerRepository(
     }
 
     private fun appendEntry(entry: Entry) {
-        walPath.appendText(json.encodeToString(entry) + "\n")
+        val bytes = (json.encodeToString(entry) + "\n").toByteArray()
+        val options = arrayOf(StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+        Files.write(walPath, bytes, *options)
         FileOutputStream(walPath.toFile(), true).use { fos ->
             fos.fd.sync()
         }

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
+import kotlin.io.path.createTempDirectory
 import kotlin.io.path.createTempFile
 import kotlin.io.path.readLines
 import kotlin.io.path.appendText
@@ -157,5 +158,18 @@ class WalLedgerRepositoryTest {
         val lines = tmpPath.readLines().filter { it.isNotBlank() }
         val lastEntry = json.decodeFromString<WalLedgerRepository.Entry>(lines.last())
         assertTrue(lastEntry.lsn > firstLsn, "New LSN ${lastEntry.lsn} should be greater than recovered LSN $firstLsn")
+    }
+
+    @Test
+    fun `should create WAL file and parent directories on first save`() {
+        val tmpDir = createTempDirectory("wal-test")
+        val walPath = tmpDir.resolve("nested/dir/wal.json")
+        val repository = WalLedgerRepository(fakeLedgerRepository, walPath)
+        val trx = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+
+        repository.save(trx)
+
+        val lines = walPath.readLines().filter { it.isNotBlank() }
+        assertEquals(1, lines.size)
     }
 }
