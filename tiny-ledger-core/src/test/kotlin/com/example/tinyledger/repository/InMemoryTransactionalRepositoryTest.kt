@@ -247,9 +247,8 @@ class InMemoryTransactionalRepositoryTest {
     @Test
     fun `should not allow ABA vulnerability allowing commit on stale data`() {
         val store = ConcurrentLinkedQueue<Transaction>()
-        val partialCommitVisible = CountDownLatch(1)
-        val threadBReadDone = CountDownLatch(1)
         val threadARolledBack = CountDownLatch(1)
+        val threadBBegan = CountDownLatch(1)
         val threadCCommitted = CountDownLatch(1)
 
         val poisonAmount = BigDecimal("999")
@@ -257,8 +256,6 @@ class InMemoryTransactionalRepositoryTest {
         val customRepo = object : LedgerRepository {
             override fun save(transaction: Transaction): Transaction {
                 if (transaction.amount == poisonAmount) {
-                    partialCommitVisible.countDown()
-                    threadBReadDone.await()
                     throw RuntimeException("simulated save failure")
                 }
                 store.add(transaction)
@@ -270,18 +267,16 @@ class InMemoryTransactionalRepositoryTest {
 
         val repository = InMemoryTransactionalRepository(customRepo)
 
-        // Seed: one deposit already committed in the underlying store
         val seed = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
         store.add(seed)
 
         val phantomDeposit = Transaction(amount = BigDecimal("200"), type = TransactionType.DEPOSIT)
         val poison = Transaction(amount = poisonAmount, type = TransactionType.DEPOSIT)
 
-        var threadBSawPhantom = false
         var threadBCommitSucceeded = false
 
-        // Thread A: CAS(0,1) succeeds → saves phantomDeposit → poison throws
-        //   catch: deletes phantomDeposit, decrementAndGet → version back to 0
+        // Thread A: CAS(0,1) succeeds → saves phantomDeposit → poison throws → rollback
+        // Version stays bumped at 1, but phantom is cleaned up
         val threadA = Thread {
             repository.begin()
             repository.save(phantomDeposit)
@@ -292,31 +287,31 @@ class InMemoryTransactionalRepositoryTest {
             threadARolledBack.countDown()
         }
 
-        // Thread B: begins after A's CAS (readVersion=1), reads phantom data
+        // Thread B: begins after A's failed commit (readVersion=1), sees clean state
         val threadB = Thread {
-            partialCommitVisible.await()
-            repository.begin()  // readVersion = 1 (A already bumped it)
-            threadBSawPhantom = repository.findAll().contains(phantomDeposit)
-            threadBReadDone.countDown()
+            threadARolledBack.await()
+            repository.begin() // readVersion = 1
+            threadBBegan.countDown()
+
+            // Lock prevents seeing phantom - snapshot is clean
+            assertFalse(repository.findAll().contains(phantomDeposit), "Thread B should not see phantom data")
 
             threadCCommitted.await()
-            val item = Transaction(amount = BigDecimal("50"), type = TransactionType.DEPOSIT)
-            repository.save(item)
+            repository.save(Transaction(amount = BigDecimal("50"), type = TransactionType.DEPOSIT))
             try {
-                repository.commit()  // CAS(1, 2) — version is 1 again (ABA: 1→0→1)
+                repository.commit() // CAS(1, 2) fails - version is now 2 after Thread C
                 threadBCommitSucceeded = true
             } catch (_: OptimisticLockException) {
                 threadBCommitSucceeded = false
             }
         }
 
-        // Thread C: commits after A's rollback → CAS(0,1) bumps version back to 1
+        // Thread C: commits after A's rollback and B's begin → bumps version to 2
         val threadC = Thread {
-            threadARolledBack.await()
-            val item = Transaction(amount = BigDecimal("10"), type = TransactionType.DEPOSIT)
-            repository.begin()
-            repository.save(item)
-            repository.commit()
+            threadBBegan.await()
+            repository.withTransaction {
+                repository.save(Transaction(amount = BigDecimal("10"), type = TransactionType.DEPOSIT))
+            }
             threadCCommitted.countDown()
         }
 
@@ -327,14 +322,61 @@ class InMemoryTransactionalRepositoryTest {
         threadB.join()
         threadC.join()
 
-        // Thread B read phantomDeposit during A's partial commit
-        assertTrue(threadBSawPhantom, "Thread B has seen the phantom deposit")
-
-        // Thread B's commit succeeded despite reading rolled-back data (ABA vulnerability)
-        assertFalse(threadBCommitSucceeded, "Thread B commit should not succeed")
-
-        // The data Thread B based its read on is gone — phantomDeposit was rolled back
+        assertFalse(threadBCommitSucceeded, "Thread B commit should fail - stale readVersion")
         assertFalse(store.contains(phantomDeposit), "Phantom deposit should not be in the store")
+    }
+
+    @Test
+    fun `concurrent withdrawals should not overdraft due to snapshot during apply`() {
+        val threadSafeStore = ConcurrentLinkedQueue<Transaction>()
+        val seed = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+        threadSafeStore.add(seed)
+
+        val threadSafeRepo = object : LedgerRepository {
+            override fun save(transaction: Transaction): Transaction {
+                threadSafeStore.add(transaction)
+                return transaction
+            }
+            override fun findAll(): List<Transaction> = threadSafeStore.toList()
+            override fun delete(transaction: Transaction): Boolean = threadSafeStore.remove(transaction)
+        }
+
+        val repository = InMemoryTransactionalRepository(threadSafeRepo)
+        val threadCount = 10
+        val latch = CountDownLatch(1)
+
+        // All threads try to withdraw $80 from a $100 balance - at most one should succeed
+        val results = ConcurrentLinkedQueue<Boolean>()
+        val threads = (1..threadCount).map {
+            Thread {
+                latch.await()
+                try {
+                    repository.withTransaction {
+                        val balance = repository.findAll()
+                            .fold(BigDecimal.ZERO) { acc, t ->
+                                if (t.type == TransactionType.DEPOSIT) acc + t.amount else acc - t.amount
+                            }
+                        if (balance < BigDecimal("80")) throw IllegalStateException("Insufficient balance")
+                        repository.save(Transaction(amount = BigDecimal("80"), type = TransactionType.WITHDRAWAL))
+                    }
+                    results.add(true)
+                } catch (_: IllegalStateException) {
+                    results.add(false)
+                }
+            }
+        }
+
+        threads.forEach { it.start() }
+        latch.countDown()
+        threads.forEach { it.join() }
+
+        val successes = results.count { it }
+        assertEquals(1, successes, "Exactly one withdrawal should succeed")
+
+        val finalBalance = threadSafeStore.toList().fold(BigDecimal.ZERO) { acc, t ->
+            if (t.type == TransactionType.DEPOSIT) acc + t.amount else acc - t.amount
+        }
+        assertEquals(BigDecimal("20"), finalBalance, "Final balance should be $20")
     }
 
     @Test
@@ -376,6 +418,7 @@ class InMemoryTransactionalRepositoryTest {
 
     @Test
     fun `should ensure snapshot isolation or repeatable reads`() {
+        val threadABegan = CountDownLatch(1)
         val threadBSaved = CountDownLatch(1)
         var firstRead: List<Transaction> = emptyList()
         var secondRead: List<Transaction> = emptyList()
@@ -383,11 +426,13 @@ class InMemoryTransactionalRepositoryTest {
         val threadA = Thread {
             repository.withTransaction {
                 firstRead = repository.findAll()
+                threadABegan.countDown()
                 threadBSaved.await()
                 secondRead = repository.findAll()
             }
         }
         val threadB = Thread {
+            threadABegan.await()
             repository.withTransaction {
                 repository.save(Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT))
             }

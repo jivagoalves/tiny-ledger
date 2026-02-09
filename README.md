@@ -13,21 +13,33 @@ A simple in-memory ledger API for deposits, withdrawals, balances, and history.
 
 Full ACID-style transactional semantics without a database:
 
-- **Snapshot isolation** — each transaction reads from a consistent point-in-time snapshot, unaffected by concurrent writes
-- **Optimistic concurrency control** — concurrent transactions proceed without locks; conflicts are detected at commit time via compare-and-set versioning
-- **Automatic retry** — `withTransaction {}` transparently retries on conflict, so callers never see `OptimisticLockException`
-- **Atomic commit/rollback** — pending saves and deletes are buffered and applied atomically on commit, with compensating rollback on failure
-- **Thread-safe** — transaction context is `ThreadLocal`-scoped, so concurrent threads get fully isolated sessions
+- **Snapshot isolation**: each transaction reads from a consistent point-in-time snapshot, unaffected by concurrent writes
+- **Optimistic concurrency control**: concurrent transactions proceed without locks; conflicts are detected at commit time via compare-and-set versioning
+- **Automatic retry**: `withTransaction {}` transparently retries on conflict, so callers never see `OptimisticLockException`
+- **Atomic commit/rollback**: pending saves and deletes are buffered and applied atomically on commit, with compensating rollback on failure
+- **Thread-safe**: transaction context is `ThreadLocal`-scoped, so concurrent threads get fully isolated sessions
 
 ### Write-Ahead Log (`WalLedgerRepository`)
 
 Durable transaction logging that survives process crashes:
 
-- **Append-only log** — every committed transaction is serialized as a JSON line and appended to a WAL file before reaching the in-memory store, ensuring durability
-- **fsync on write** — each append is followed by `FileDescriptor.sync()` to guarantee data reaches disk
-- **Crash recovery** — on startup, `recover()` replays COMMITTED entries from the WAL to rebuild in-memory state
-- **Torn write tolerance** — corrupt or partial lines (from crashes mid-write) are silently skipped during recovery
-- **Monotonic LSN** — each entry gets an instance-scoped log sequence number; recovery re-initializes the counter from the WAL so LSNs never go backwards
+- **Append-only log**: every committed transaction is serialized as a JSON line and appended to a WAL file before reaching the in-memory store, ensuring durability
+- **fsync on write**: each "append" is followed by `FileDescriptor.sync()` to guarantee data reaches disk
+- **Crash recovery**: on startup, `recover()` replays COMMITTED entries from the WAL to rebuild in-memory state
+- **Torn write tolerance**: corrupt or partial lines (from crashes mid-write) are silently skipped during recovery
+- **Monotonic LSN**: each entry gets an instance-scoped log sequence number; recovery re-initializes the counter from the WAL so LSNs never go backwards
+
+### Known Issues
+
+#### Transactions
+- **Non-atomic rollback**: `commit()` saves items one-by-one; if a save fails midway, the compensating deletes may not fully undo partial writes
+- **Unbounded retry on conflict**: `withTransaction {}` retries indefinitely on `OptimisticLockException` with no backoff or retry limit, risking livelock under high contention
+
+#### WAL
+- **No WAL truncation/compaction**: the WAL file grows without bound; there is no checkpointing or log rotation
+
+#### General
+- **Global transaction ID generator**: `Transaction.kt` uses a top-level `AtomicLong` singleton for IDs
 
 ## Architecture
 - **tiny-ledger-core**: Core domain logic, DDD-based

@@ -2,6 +2,8 @@ package com.example.tinyledger.repository
 
 import com.example.tinyledger.Transaction
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 class OptimisticLockException : RuntimeException("Concurrent modification detected")
 
@@ -18,25 +20,30 @@ class InMemoryTransactionalRepository(private val ledgerRepository: LedgerReposi
     }
 
     private val version = AtomicLong(0)
+    private val commitLock = ReentrantLock()
     private val activeTransactionContext = ThreadLocal<TransactionContext>()
 
     override fun begin() {
-        activeTransactionContext.set(
-            TransactionContext(
-                snapshot = ledgerRepository.findAll().toList(),
-                readVersion = version.get()
+        commitLock.withLock {
+            activeTransactionContext.set(
+                TransactionContext(
+                    snapshot = ledgerRepository.findAll().toList(),
+                    readVersion = version.get()
+                )
             )
-        )
+        }
     }
 
     override fun commit() {
         val txCtx = activeTransactionContext.get() ?: return
         try {
             if (txCtx.hasPendingChanges()) {
-                if (!compareAndSetVersion(txCtx)) {
-                    throw OptimisticLockException()
+                commitLock.withLock {
+                    if (!compareAndSetVersion(txCtx)) {
+                        throw OptimisticLockException()
+                    }
+                    applyChanges(txCtx)
                 }
-                applyChanges(txCtx)
             }
         } finally {
             reset()
