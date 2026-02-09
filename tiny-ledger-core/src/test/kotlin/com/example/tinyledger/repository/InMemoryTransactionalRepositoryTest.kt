@@ -2,7 +2,10 @@ package com.example.tinyledger.repository
 
 import com.example.tinyledger.Transaction
 import com.example.tinyledger.TransactionType
-import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -37,7 +40,7 @@ class InMemoryTransactionalRepositoryTest {
 
         repository.save(transaction)
 
-        Assertions.assertEquals(listOf(transaction), repository.findAll())
+        assertEquals(listOf(transaction), repository.findAll())
     }
 
     @Test
@@ -48,7 +51,7 @@ class InMemoryTransactionalRepositoryTest {
         repository.save(transaction)
         repository.commit()
 
-        Assertions.assertEquals(listOf(transaction), repository.findAll())
+        assertEquals(listOf(transaction), repository.findAll())
     }
 
     @Test
@@ -60,7 +63,7 @@ class InMemoryTransactionalRepositoryTest {
         repository.commit()
         repository.commit()
 
-        Assertions.assertEquals(listOf(transaction), repository.findAll())
+        assertEquals(listOf(transaction), repository.findAll())
     }
 
     @Test
@@ -71,7 +74,7 @@ class InMemoryTransactionalRepositoryTest {
         repository.save(transaction)
         repository.rollback()
 
-        Assertions.assertTrue(repository.findAll().isEmpty())
+        assertTrue(repository.findAll().isEmpty())
     }
 
     @Test
@@ -81,7 +84,7 @@ class InMemoryTransactionalRepositoryTest {
         repository.save(transaction)
         repository.delete(transaction)
 
-        Assertions.assertTrue(repository.findAll().isEmpty())
+        assertTrue(repository.findAll().isEmpty())
     }
 
     @Test
@@ -93,7 +96,7 @@ class InMemoryTransactionalRepositoryTest {
             repository.delete(transaction)
         }
 
-        Assertions.assertTrue(repository.findAll().isEmpty())
+        assertTrue(repository.findAll().isEmpty())
     }
 
     @Test
@@ -101,14 +104,14 @@ class InMemoryTransactionalRepositoryTest {
         val transaction = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
         repository.save(transaction)
 
-        Assertions.assertThrows(RuntimeException::class.java) {
+        assertThrows(RuntimeException::class.java) {
             repository.withTransaction {
                 repository.delete(transaction)
                 throw RuntimeException("Boom!")
             }
         }
 
-        Assertions.assertTrue(repository.findAll().isNotEmpty())
+        assertTrue(repository.findAll().isNotEmpty())
     }
 
     @Test
@@ -120,7 +123,7 @@ class InMemoryTransactionalRepositoryTest {
             repository.delete(transaction)
         }
 
-        Assertions.assertTrue(repository.findAll().isEmpty())
+        assertTrue(repository.findAll().isEmpty())
     }
 
     @Test
@@ -130,7 +133,7 @@ class InMemoryTransactionalRepositoryTest {
 
         repository.withTransaction {
             repository.delete(transaction)
-            Assertions.assertTrue(repository.findAll().isEmpty())
+            assertTrue(repository.findAll().isEmpty())
         }
     }
 
@@ -140,7 +143,7 @@ class InMemoryTransactionalRepositoryTest {
         repository.save(transaction)
 
         repository.begin()
-        Assertions.assertEquals(listOf(transaction), repository.findAll())
+        assertEquals(listOf(transaction), repository.findAll())
     }
 
     @Test
@@ -162,12 +165,12 @@ class InMemoryTransactionalRepositoryTest {
         repository.begin()
         repository.save(Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT))
         repository.save(Transaction(amount = BigDecimal("200"), type = TransactionType.DEPOSIT))
-        Assertions.assertThrows(IllegalStateException::class.java) {
+        assertThrows(IllegalStateException::class.java) {
             repository.commit()
         }
 
 
-        Assertions.assertTrue(repository.findAll().isEmpty())
+        assertTrue(repository.findAll().isEmpty())
     }
 
     @Test
@@ -180,22 +183,22 @@ class InMemoryTransactionalRepositoryTest {
             repository.save(transaction2)
         }
 
-        Assertions.assertEquals(transaction2, result)
-        Assertions.assertEquals(listOf(transaction1, transaction2), repository.findAll())
+        assertEquals(transaction2, result)
+        assertEquals(listOf(transaction1, transaction2), repository.findAll())
     }
 
     @Test
     fun `should commit transactional operations in a block atomically`() {
         val transaction1 = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
 
-        Assertions.assertThrows(RuntimeException::class.java) {
+        assertThrows(RuntimeException::class.java) {
             repository.withTransaction {
                 repository.save(transaction1)
                 throw RuntimeException()
             }
         }
 
-        Assertions.assertTrue(repository.findAll().isEmpty())
+        assertTrue(repository.findAll().isEmpty())
     }
 
     @Test
@@ -238,7 +241,7 @@ class InMemoryTransactionalRepositoryTest {
         threadA.join()
         threadB.join()
 
-        Assertions.assertEquals(listOf(transactionB), threadSafeStore.toList())
+        assertEquals(listOf(transactionB), threadSafeStore.toList())
     }
 
     @Test
@@ -325,13 +328,50 @@ class InMemoryTransactionalRepositoryTest {
         threadC.join()
 
         // Thread B read phantomDeposit during A's partial commit
-        Assertions.assertTrue(threadBSawPhantom, "Thread B has seen the phantom deposit")
+        assertTrue(threadBSawPhantom, "Thread B has seen the phantom deposit")
 
         // Thread B's commit succeeded despite reading rolled-back data (ABA vulnerability)
-        Assertions.assertFalse(threadBCommitSucceeded, "Thread B commit should not succeed")
+        assertFalse(threadBCommitSucceeded, "Thread B commit should not succeed")
 
         // The data Thread B based its read on is gone — phantomDeposit was rolled back
-        Assertions.assertFalse(store.contains(phantomDeposit), "Phantom deposit should not be in the store")
+        assertFalse(store.contains(phantomDeposit), "Phantom deposit should not be in the store")
+    }
+
+    @Test
+    fun `should rollback all applied saves even when a compensating delete throws`() {
+        val persistedStore = mutableListOf<Transaction>()
+        val trx1 = Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT)
+        val trx2 = Transaction(amount = BigDecimal("200"), type = TransactionType.DEPOSIT)
+        val trx3 = Transaction(amount = BigDecimal("300"), type = TransactionType.DEPOSIT)
+
+        val flakyRepo = object : LedgerRepository {
+            override fun save(transaction: Transaction): Transaction {
+                if (transaction == trx3) throw RuntimeException("save failed")
+                persistedStore.add(transaction)
+                return transaction
+            }
+            override fun findAll(): List<Transaction> = persistedStore.toList()
+            override fun delete(transaction: Transaction): Boolean {
+                if (transaction == trx1) throw RuntimeException("delete failed")
+                return persistedStore.remove(transaction)
+            }
+        }
+
+        val repository = InMemoryTransactionalRepository(flakyRepo)
+
+        repository.begin()
+        repository.save(trx1)
+        repository.save(trx2)
+        repository.save(trx3)
+
+        assertThrows(RuntimeException::class.java) {
+            repository.commit()
+        }
+
+        // trx1 delete threw, but trx2 should still have been cleaned up
+        assertFalse(persistedStore.contains(trx2), "trx2 should be rolled back")
+        // trx3 was never saved, so it should not be in the store
+        assertFalse(persistedStore.contains(trx3), "trx3 was never saved")
     }
 
     @Test
@@ -359,7 +399,7 @@ class InMemoryTransactionalRepositoryTest {
         threadA.join()
         threadB.join()
 
-        Assertions.assertEquals(emptyList<Transaction>(), firstRead)
-        Assertions.assertEquals(emptyList<Transaction>(), secondRead)
+        assertEquals(emptyList<Transaction>(), firstRead)
+        assertEquals(emptyList<Transaction>(), secondRead)
     }
 }

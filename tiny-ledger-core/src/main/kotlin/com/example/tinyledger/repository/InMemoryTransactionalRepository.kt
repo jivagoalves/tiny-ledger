@@ -47,12 +47,20 @@ class InMemoryTransactionalRepository(private val ledgerRepository: LedgerReposi
         version.compareAndSet(txCtx.readVersion, txCtx.readVersion + 1)
 
     private fun applyChanges(txCtx: TransactionContext) {
+        val appliedSaves = mutableListOf<Transaction>()
+        val appliedDeletes = mutableListOf<Transaction>()
         try {
-            txCtx.saves.forEach { ledgerRepository.save(it) }
-            txCtx.deletes.forEach { ledgerRepository.delete(it) }
+            txCtx.saves.forEach {
+                ledgerRepository.save(it)
+                appliedSaves.add(it)
+            }
+            txCtx.deletes.forEach {
+                ledgerRepository.delete(it)
+                appliedDeletes.add(it)
+            }
         } catch (e: RuntimeException) {
-            txCtx.saves.forEach { ledgerRepository.delete(it) }
-            txCtx.deletes.forEach { ledgerRepository.save(it) }
+            appliedSaves.forEach { runCatching { ledgerRepository.delete(it) } }
+            appliedDeletes.forEach { runCatching { ledgerRepository.save(it) } }
             throw e
         }
     }
