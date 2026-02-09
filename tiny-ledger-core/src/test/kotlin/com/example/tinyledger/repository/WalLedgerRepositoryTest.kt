@@ -7,6 +7,9 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.createTempFile
 import kotlin.io.path.readLines
@@ -158,6 +161,44 @@ class WalLedgerRepositoryTest {
         val lines = tmpPath.readLines().filter { it.isNotBlank() }
         val lastEntry = json.decodeFromString<WalLedgerRepository.Entry>(lines.last())
         assertTrue(lastEntry.lsn > firstLsn, "New LSN ${lastEntry.lsn} should be greater than recovered LSN $firstLsn")
+    }
+
+    @Test
+    fun `concurrent saves should produce intact WAL entries`() {
+        val tmpPath = createTempFile("wal", ".json")
+        val threadSafeStore = CopyOnWriteArrayList<Transaction>()
+        val threadSafeDelegate = object : LedgerRepository {
+            override fun save(transaction: Transaction): Transaction {
+                threadSafeStore.add(transaction)
+                return transaction
+            }
+            override fun findAll(): List<Transaction> = threadSafeStore.toList()
+            override fun delete(transaction: Transaction): Boolean = threadSafeStore.remove(transaction)
+        }
+        val repository = WalLedgerRepository(threadSafeDelegate, tmpPath)
+        val threadCount = 10
+        val savesPerThread = 20
+        val latch = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(threadCount)
+
+        val futures = (1..threadCount).map {
+            executor.submit {
+                latch.await()
+                repeat(savesPerThread) {
+                    repository.save(Transaction(amount = BigDecimal("1"), type = TransactionType.DEPOSIT))
+                }
+            }
+        }
+        latch.countDown()
+        futures.forEach { it.get() }
+        executor.shutdown()
+
+        val expectedCount = threadCount * savesPerThread
+        val lines = tmpPath.readLines().filter { it.isNotBlank() }
+        assertEquals(expectedCount, lines.size, "Expected $expectedCount WAL lines")
+        val entries = lines.map { json.decodeFromString<WalLedgerRepository.Entry>(it) }
+        assertEquals(expectedCount, entries.size, "All lines should be parseable w/o corrupt entries")
+        assertEquals(expectedCount, entries.map { it.lsn }.toSet().size, "All LSNs should be unique")
     }
 
     @Test

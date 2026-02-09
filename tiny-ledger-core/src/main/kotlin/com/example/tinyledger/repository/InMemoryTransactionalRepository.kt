@@ -62,8 +62,7 @@ class InMemoryTransactionalRepository(private val ledgerRepository: LedgerReposi
     }
 
     override fun save(transaction: Transaction): Transaction {
-        val txCtx = activeTransactionContext.get()
-            ?: return ledgerRepository.save(transaction)
+        val txCtx = activeTransactionContext.get() ?: return ledgerRepository.save(transaction)
         txCtx.saves.add(transaction)
         return transaction
     }
@@ -75,8 +74,7 @@ class InMemoryTransactionalRepository(private val ledgerRepository: LedgerReposi
     }
 
     override fun delete(transaction: Transaction): Boolean {
-        val txCtx = activeTransactionContext.get()
-            ?: return ledgerRepository.delete(transaction)
+        val txCtx = activeTransactionContext.get() ?: return ledgerRepository.delete(transaction)
         if (txCtx.saves.remove(transaction)) return true
         if (transaction in txCtx.snapshot) return txCtx.deletes.add(transaction)
         return false

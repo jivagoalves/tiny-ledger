@@ -8,6 +8,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlin.io.path.createParentDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readLines
@@ -22,6 +24,7 @@ class WalLedgerRepository(
 
     private val json = Json { encodeDefaults = true }
     private val lsn = AtomicLong(0)
+    private val writeLock = ReentrantLock()
 
     override fun save(transaction: Transaction): Transaction {
         appendEntry(Entry(lsn = lsn.incrementAndGet(), status = Status.COMMITTED, transactions = listOf(transaction)))
@@ -45,7 +48,7 @@ class WalLedgerRepository(
         return transactions
     }
 
-    private fun appendEntry(entry: Entry) {
+    private fun appendEntry(entry: Entry) = writeLock.withLock {
         val bytes = (json.encodeToString(entry) + "\n").toByteArray()
         val options = arrayOf(StandardOpenOption.CREATE, StandardOpenOption.APPEND)
         Files.write(walPath, bytes, *options)
