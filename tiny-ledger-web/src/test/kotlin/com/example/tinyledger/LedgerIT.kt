@@ -6,15 +6,29 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
+import org.springframework.test.annotation.DirtiesContext
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
+import java.util.UUID
+import kotlin.io.path.createTempFile
 
 @SpringBootTest
 @AutoConfigureMockMvc
 class LedgerIT @Autowired constructor(
     val mockMvc: MockMvc,
 ) {
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun walProperties(registry: DynamicPropertyRegistry) {
+            val tmpPath = createTempFile("wal-${UUID.randomUUID()}", ".json")
+            registry.add("ledger.wal.path") { tmpPath.toString() }
+        }
+    }
+
     @Test
     fun `deposit and get balance`() {
         // Perform deposit
