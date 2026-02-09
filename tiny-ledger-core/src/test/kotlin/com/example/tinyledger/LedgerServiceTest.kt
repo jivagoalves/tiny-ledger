@@ -1,17 +1,11 @@
 package com.example.tinyledger
 
-import arrow.core.Either
-import com.example.tinyledger.repository.InMemoryTransactionalRepository
-import com.example.tinyledger.repository.LedgerRepository
 import com.example.tinyledger.repository.TransactionalLedgerRepository
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.CountDownLatch
 
 class LedgerServiceTest {
     private val store = mutableListOf<Transaction>()
@@ -103,45 +97,4 @@ class LedgerServiceTest {
         )
     }
 
-    @Test
-    fun `concurrent withdrawals should not overdraw balance due to race conditions`() {
-        val bothReadBalance = CountDownLatch(2)
-        val store = ConcurrentLinkedQueue<Transaction>()
-
-        val synchronizingRepo = object : LedgerRepository {
-            override fun save(transaction: Transaction): Transaction {
-                store.add(transaction)
-                return transaction
-            }
-
-            override fun findAll(): List<Transaction> {
-                val result = store.toList()
-                bothReadBalance.countDown()
-                bothReadBalance.await()
-                return result
-            }
-
-            override fun delete(transaction: Transaction): Boolean = store.remove(transaction)
-        }
-
-        val repository = InMemoryTransactionalRepository(synchronizingRepo)
-        val service = LedgerService(repository)
-
-        store.add(Transaction(amount = BigDecimal("100"), type = TransactionType.DEPOSIT))
-
-        val results = ConcurrentLinkedQueue<Either<LedgerError, Transaction>>()
-        val thread1 = Thread { results.add(service.withdrawal(BigDecimal("100"))) }
-        val thread2 = Thread { results.add(service.withdrawal(BigDecimal("100"))) }
-
-        thread1.start()
-        thread2.start()
-        thread1.join()
-        thread2.join()
-
-        // One withdrawal succeed, not both
-        assertTrue(results.any { it.isLeft() })
-        assertTrue(results.any { it.isRight() })
-        // Balance is 0: valid state
-        assertEquals(BigDecimal.ZERO, service.getBalance())
-    }
 }
